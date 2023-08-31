@@ -19,4 +19,3 @@ if __name__ == "__main__":
     entrypoint_main()
 
 
-# python generate.py --inference_server="openai_azure_chat:AIGA_MODEL_0::" --base_model=gpt-3.5-turbo-16k --h2ocolors=False --langchain_mode=UserData

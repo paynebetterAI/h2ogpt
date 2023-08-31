@@ -394,7 +394,7 @@ def go_gradio(**kwargs):
                               auth_access=kwargs['auth_access'],
                               auth_freeze=kwargs['auth_freeze'],
                               guest_name=kwargs['guest_name'],
-                              selection_docs_state00=selection_docs_state0)
+                              selection_docs_state00=copy.deepcopy(selection_docs_state0))
 
     def get_request_state(request):
         # if need to get state, do it now
@@ -555,9 +555,17 @@ def go_gradio(**kwargs):
             else:
                 df2 = pd.DataFrame(None)
                 df3 = pd.DataFrame(None)
-            df_tmp = df2.join(df1, on='Collection').replace(np.nan, '')
-            df = df_tmp.join(df3, on='Collection').replace(np.nan, '')
-            df = df.reset_index()
+            if df1.shape[1] > 0 and df2.shape[1] > 0 and df2.shape[1] > 0:
+                df_tmp = df2.join(df1, on='Collection').replace(np.nan, '')
+                df = df_tmp.join(df3, on='Collection').replace(np.nan, '')
+                df = df.reset_index()
+            elif df2.shape[1] > 0 and df2.shape[1] > 0:
+                df = df2.join(df3, on='Collection').replace(np.nan, '')
+                df = df.reset_index()
+            elif df1.shape[1] > 0:
+                df = df1.reset_index()
+            else:
+                df = pd.DataFrame(None)
             return df
 
         normal_block = gr.Row(visible=not base_wanted, equal_height=False)
@@ -1588,7 +1596,7 @@ def go_gradio(**kwargs):
                 doc_hashes = [x.get('doc_hash', 'None') for x in db_metadatas]
                 docs_with_score = [x for hx, px, cx, x in
                                    sorted(zip(doc_hashes, doc_page_ids, doc_chunk_ids, docs_with_score),
-                                          key=lambda x: (x[0], x[1]))
+                                          key=lambda x: (x[0], x[1], x[2]))
                                    # if cx == -1
                                    ]
                 db_metadatas = [x[0].metadata for x in docs_with_score][:max_raw_chunks]

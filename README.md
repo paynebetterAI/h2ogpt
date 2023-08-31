@@ -44,6 +44,9 @@ python generate.py --base_model='llama' --prompt_type=llama2
 ```
 then go to your browser by visiting [http://127.0.0.1:7860](http://127.0.0.1:7860) or [http://localhost:7860](http://localhost:7860).
 
+panye：可以使用下面的代码直接启动azure服务
+python generate.py --inference_server="openai_azure_chat:AIGA_MODEL_0::" --base_model=gpt-3.5-turbo-16k --h2ocolors=False --langchain_mode=UserData
+
 ---
 
 #### Windows 10/11 64-bit with full document Q/A capability

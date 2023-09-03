@@ -249,6 +249,7 @@ def main(
         # images
         enable_ocr=False,
         enable_doctr=False,
+        enable_pix2struct=False,
         enable_captions=True,
 
         pre_load_caption_model: bool = False,
@@ -677,10 +678,12 @@ def main(
 
     # allow enabling langchain via ENV
     # FIRST PLACE where LangChain referenced, but no imports related to it
-    langchain_mode = os.environ.get("LANGCHAIN_MODE", langchain_mode)
     langchain_modes = ast.literal_eval(os.environ.get("langchain_modes", str(langchain_modes)))
-    if langchain_mode is not None:
-        assert langchain_mode in langchain_modes, "Invalid langchain_mode %s" % langchain_mode
+    if not isinstance(langchain_modes, list):
+        langchain_modes = []
+    # always allow DISABLED
+    if LangChainMode.DISABLED.value not in langchain_modes:
+        langchain_modes.append(LangChainMode.DISABLED.value)
 
     # update
     if isinstance(langchain_mode_paths, str):
@@ -716,11 +719,12 @@ def main(
         if user_path:
             langchain_mode_paths['UserData'] = user_path
 
-    assert langchain_action in langchain_actions, "Invalid langchain_action %s" % langchain_action
+    assert langchain_action in langchain_actions, "Invalid langchain_action %s not in %s" % (langchain_action, langchain_actions)
     assert len(
         set(langchain_agents).difference(langchain_agents_list)) == 0, "Invalid langchain_agents %s" % langchain_agents
 
     # auto-set langchain_mode
+    langchain_mode = os.environ.get("LANGCHAIN_MODE", langchain_mode)
     if have_langchain and langchain_mode is None:
         # start in chat mode, in case just want to chat and don't want to get "No documents to query" by default.
         if LangChainMode.LLM.value in langchain_modes:
@@ -743,6 +747,9 @@ def main(
         # if not set yet, disable
         langchain_mode = LangChainMode.DISABLED.value
         print("Auto set langchain_mode=%s  Have langchain package: %s" % (langchain_mode, have_langchain), flush=True)
+    # go ahead and add
+    if langchain_mode not in langchain_modes:
+        langchain_modes.append(langchain_mode)
 
     if is_public:
         allow_upload_to_user_data = False
@@ -881,6 +888,11 @@ def main(
     if offload_folder:
         offload_folder = makedirs(offload_folder, exist_ok=True, tmp_ok=True, use_base=True)
 
+    # defaults
+    caption_loader = None
+    doctr_loader = None
+    pix2struct_loader = None
+
     image_loaders_options0, image_loaders_options, \
         pdf_loaders_options0, pdf_loaders_options, \
         url_loaders_options0, url_loaders_options = lg_to_gr(**locals())
@@ -918,6 +930,7 @@ def main(
                             pdf_loaders,
                             url_loaders,
                             jq_schema,
+                            use_system_prompt,
                             verbose,
                             )
 
@@ -986,10 +999,6 @@ def main(
                                  langchain_mode_paths=langchain_mode_paths,
                                  langchain_mode_types=langchain_mode_types)
     selection_docs_state = copy.deepcopy(selection_docs_state0)
-
-    # defaults
-    caption_loader = None
-    doctr_loader = None
 
     if cli or not gradio:
         # initial state for query prompt
@@ -1906,6 +1915,7 @@ def evaluate(
         captions_model=None,
         caption_loader=None,
         doctr_loader=None,
+        pix2struct_loader=None,
         async_output=None,
         num_async=None,
         src_lang=None,
@@ -1954,6 +1964,7 @@ def evaluate(
         pdf_loaders_options0=None,
         url_loaders_options0=None,
         jq_schema0=None,
+        use_system_prompt=None,
 ):
     # ensure passed these
     assert concurrency_count is not None
@@ -2027,7 +2038,7 @@ def evaluate(
         chosen_model_state = model_state
     elif have_cli_model:
         # USE MODEL SETUP AT CLI
-        assert isinstance(model_state['model'], str)  # expect no fresh model
+        assert isinstance(model_state['model'], (type(None), str))  # expect no fresh model
         chosen_model_state = model_state0
     else:
         raise AssertionError(no_model_msg)
@@ -2097,13 +2108,14 @@ def evaluate(
     num_prompt_tokens = (num_prompt_tokens1 or 0) + (num_prompt_tokens2 or 0) + (num_prompt_tokens3 or 0)
 
     # get prompt
-    prompter = Prompter(prompt_type, prompt_dict, debug=debug, chat=chat, stream_output=stream_output)
+    prompter = Prompter(prompt_type, prompt_dict, debug=debug, chat=chat, stream_output=stream_output,
+                        use_system_prompt=use_system_prompt)
     data_point = dict(context=context, instruction=instruction, input=iinput)
     prompt = prompter.generate_prompt(data_point)
 
     # THIRD PLACE where LangChain referenced, but imports only occur if enabled and have db to use
-    assert langchain_mode in langchain_modes, "Invalid langchain_mode %s" % langchain_mode
-    assert langchain_action in langchain_actions, "Invalid langchain_action %s" % langchain_action
+    assert langchain_mode in langchain_modes, "Invalid langchain_mode %s not in %s" % (langchain_mode, langchain_modes)
+    assert langchain_action in langchain_actions, "Invalid langchain_action %s not in %s" % (langchain_action, langchain_actions)
     assert len(
         set(langchain_agents).difference(langchain_agents_list)) == 0, "Invalid langchain_agents %s" % langchain_agents
 
@@ -2155,7 +2167,8 @@ def evaluate(
         loaders_dict.update(dict(captions_model=captions_model,
                                  caption_loader=caption_loader,
                                  jq_schema=jq_schema,
-                                 doctr_loader=doctr_loader
+                                 doctr_loader=doctr_loader,
+                                 pix2struct_loader=pix2struct_loader,
                                  ))
         for r in run_qa_db(
                 inference_server=inference_server,
@@ -2899,6 +2912,7 @@ def get_generate_params(model_lower,
                         pdf_loaders,
                         url_loaders,
                         jq_schema,
+                        use_system_prompt,
                         verbose,
                         ):
     use_defaults = False
@@ -3090,7 +3104,8 @@ y = np.random.randint(0, 1, 100)
 
     # get prompt_dict from prompt_type, so user can see in UI etc., or for custom do nothing except check format
     prompt_dict, error0 = get_prompt(prompt_type, prompt_dict,
-                                     chat=False, context='', reduced=False, making_context=False, return_dict=True)
+                                     chat=False, context='', reduced=False, making_context=False, return_dict=True,
+                                     use_system_prompt=use_system_prompt)
     if error0:
         raise RuntimeError("Prompt wrong: %s" % error0)
 
